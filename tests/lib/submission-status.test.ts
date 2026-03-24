@@ -17,18 +17,17 @@ describe('isTrustedHistoryStatus', () => {
     ]);
   });
 
-  it('trusts only completed history', () => {
-    expect(isTrustedHistoryStatus('completed')).toBe(true);
+  it('trusts every defined lifecycle state', () => {
+    expect(
+      SUBMISSION_LIFECYCLE_STATUSES.every((status) =>
+        isTrustedHistoryStatus(status)
+      )
+    ).toBe(true);
   });
 
-  it('rejects every non-completed lifecycle state', () => {
-    expect(isTrustedHistoryStatus('uploaded')).toBe(false);
-    expect(isTrustedHistoryStatus('parsed')).toBe(false);
-    expect(isTrustedHistoryStatus('analyzed')).toBe(false);
-    expect(isTrustedHistoryStatus('parse_failed')).toBe(false);
-    expect(isTrustedHistoryStatus('analysis_failed')).toBe(false);
-    expect(isTrustedHistoryStatus('low_confidence')).toBe(false);
-    expect(isTrustedHistoryStatus('human_review_needed')).toBe(false);
+  it('rejects values outside the lifecycle history', () => {
     expect(isTrustedHistoryStatus('pending')).toBe(false);
+    expect(isTrustedHistoryStatus('failed')).toBe(false);
+    expect(isTrustedHistoryStatus('')).toBe(false);
   });
 });

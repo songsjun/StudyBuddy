@@ -7,10 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum StudyGoalStatus {
-  active
-}
-
 enum SubmissionLifecycleStatus {
   uploaded
   parsed
@@ -23,16 +19,15 @@ enum SubmissionLifecycleStatus {
 }
 
 model StudyGoal {
-  id                     String       @id @default(cuid())
-  targetName             String
-  rubricVersion          String
-  dimensionSchemaVersion String
-  status                 StudyGoalStatus @default(active)
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @updatedAt
-  submissions            Submission[]
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  completedAt DateTime?
+  submissions Submission[]
 
-  @@index([status])
+  @@index([completedAt])
   @@index([createdAt])
 }
 

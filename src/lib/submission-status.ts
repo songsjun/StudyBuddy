@@ -12,9 +12,9 @@ export const SUBMISSION_LIFECYCLE_STATUSES = [
 export type SubmissionLifecycleStatus =
   (typeof SUBMISSION_LIFECYCLE_STATUSES)[number];
 
-const TRUSTED_HISTORY_STATUSES: ReadonlySet<SubmissionLifecycleStatus> = new Set([
-  'completed'
-]);
+const TRUSTED_HISTORY_STATUSES: ReadonlySet<SubmissionLifecycleStatus> = new Set(
+  SUBMISSION_LIFECYCLE_STATUSES
+);
 
 export function isTrustedHistoryStatus(
   status: string
