@@ -18,6 +18,13 @@ type PrismaClientLike = Record<string, unknown> & {
   ) => Promise<T>;
 };
 
+type GoalSchemaShape = 'camel' | 'snake';
+
+type GoalQueryShape = {
+  select: Record<string, true>;
+  orderBy: Record<string, 'desc'>;
+};
+
 export type ActiveStudyGoal = {
   id: string;
   targetName: string;
@@ -56,6 +63,10 @@ export class ActiveStudyGoalConflictError extends Error {
 
 let inMemoryGoals: ActiveStudyGoal[] = [];
 
+function isTestEnvironment(): boolean {
+  return process.env.NODE_ENV === 'test';
+}
+
 function getStudyGoalDelegate(
   client: PrismaClientLike = prisma as unknown as PrismaClientLike,
 ): StudyGoalDelegate | null {
@@ -75,6 +86,18 @@ function getStudyGoalDelegate(
   }
 
   return null;
+}
+
+function requireStudyGoalDelegate(
+  client: PrismaClientLike = prisma as unknown as PrismaClientLike,
+): StudyGoalDelegate {
+  const delegate = getStudyGoalDelegate(client);
+
+  if (!delegate) {
+    throw new Error('Study goal delegate is unavailable.');
+  }
+
+  return delegate;
 }
 
 function normalizeRequiredString(value: unknown, fieldName: string): string {
@@ -136,7 +159,7 @@ function normalizeGoal(row: GoalRow): ActiveStudyGoal {
 
 function buildCreatePayload(
   input: CreateStudyGoalInput,
-  shape: 'camel' | 'snake',
+  shape: GoalSchemaShape,
 ): Record<string, unknown> {
   if (shape === 'snake') {
     return {
@@ -152,6 +175,32 @@ function buildCreatePayload(
     rubricVersion: input.rubricVersion,
     dimensionSchemaVersion: input.dimensionSchemaVersion,
     status: 'active',
+  };
+}
+
+function buildGoalQueryShape(shape: GoalSchemaShape): GoalQueryShape {
+  if (shape === 'snake') {
+    return {
+      select: {
+        id: true,
+        target_name: true,
+        rubric_version: true,
+        dimension_schema_version: true,
+        status: true,
+        created_at: true,
+        updated_at: true,
+      },
+      orderBy: {
+        created_at: 'desc',
+      },
+    };
+  }
+
+  return {
+    select: activeStudyGoalSelect,
+    orderBy: {
+      createdAt: 'desc',
+    },
   };
 }
 
@@ -184,14 +233,17 @@ function isPayloadShapeError(error: unknown): boolean {
   );
 }
 
-async function findActiveStudyGoal(
+async function findActiveStudyGoalWithShape(
   delegate: StudyGoalDelegate,
+  shape: GoalSchemaShape,
 ): Promise<ActiveStudyGoal | null> {
+  const queryShape = buildGoalQueryShape(shape);
+
   if (typeof delegate.findFirst === 'function') {
     const row = await delegate.findFirst({
       where: { status: 'active' },
-      orderBy: { createdAt: 'desc' },
-      select: activeStudyGoalSelect,
+      orderBy: queryShape.orderBy,
+      select: queryShape.select,
     });
 
     return row ? normalizeGoal(row) : null;
@@ -199,8 +251,8 @@ async function findActiveStudyGoal(
 
   const rows = await delegate.findMany!({
     where: { status: 'active' },
-    orderBy: { createdAt: 'desc' },
-    select: activeStudyGoalSelect,
+    orderBy: queryShape.orderBy,
+    select: queryShape.select,
   });
 
   if (rows.length === 0) {
@@ -214,6 +266,20 @@ async function findActiveStudyGoal(
   return normalizeGoal(rows[0]);
 }
 
+async function findActiveStudyGoal(
+  delegate: StudyGoalDelegate,
+): Promise<ActiveStudyGoal | null> {
+  try {
+    return await findActiveStudyGoalWithShape(delegate, 'camel');
+  } catch (error) {
+    if (!isPayloadShapeError(error)) {
+      throw error;
+    }
+
+    return findActiveStudyGoalWithShape(delegate, 'snake');
+  }
+}
+
 async function createStudyGoalRecord(
   delegate: StudyGoalDelegate,
   input: CreateStudyGoalInput,
@@ -221,7 +287,7 @@ async function createStudyGoalRecord(
   try {
     const created = await delegate.create({
       data: buildCreatePayload(input, 'camel'),
-      select: activeStudyGoalSelect,
+      select: buildGoalQueryShape('camel').select,
     });
 
     return normalizeGoal(created);
@@ -232,6 +298,7 @@ async function createStudyGoalRecord(
 
     const created = await delegate.create({
       data: buildCreatePayload(input, 'snake'),
+      select: buildGoalQueryShape('snake').select,
     });
 
     return normalizeGoal(created);
@@ -242,6 +309,10 @@ export async function getActiveStudyGoal(): Promise<ActiveStudyGoal | null> {
   const delegate = getStudyGoalDelegate();
 
   if (!delegate) {
+    if (!isTestEnvironment()) {
+      throw new Error('Study goal delegate is unavailable.');
+    }
+
     const activeGoals = inMemoryGoals.filter((goal) => goal.status === 'active');
 
     if (activeGoals.length === 0) {
@@ -273,6 +344,10 @@ export async function createStudyGoal(
   const delegate = getStudyGoalDelegate();
 
   if (!delegate) {
+    if (!isTestEnvironment()) {
+      throw new Error('Study goal delegate is unavailable.');
+    }
+
     const existingGoal = await getActiveStudyGoal();
 
     if (existingGoal) {
@@ -289,12 +364,7 @@ export async function createStudyGoal(
   if (typeof client.$transaction === 'function') {
     return client.$transaction(
       async (tx) => {
-        const transactionalDelegate = getStudyGoalDelegate(tx as PrismaClientLike);
-
-        if (!transactionalDelegate) {
-          throw new Error('Study goal delegate is unavailable in transaction.');
-        }
-
+        const transactionalDelegate = requireStudyGoalDelegate(tx as PrismaClientLike);
         const existingGoal = await findActiveStudyGoal(transactionalDelegate);
 
         if (existingGoal) {
