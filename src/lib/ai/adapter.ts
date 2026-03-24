@@ -17,7 +17,6 @@ export interface AnalysisProviderMetadata extends ProviderExecutionResult {
 export interface AnalysisReviewMetadata {
   reason: 'secondary_provider_failed' | 'material_disagreement';
   secondaryProviderMetadata: AnalysisProviderMetadata;
-  secondaryResult?: NormalizedAnalysisResult;
 }
 
 export interface AnalysisProviderConfig {
@@ -243,7 +242,6 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
       reviewMetadata: {
         reason: 'material_disagreement',
         secondaryProviderMetadata: secondary.providerMetadata,
-        secondaryResult: secondary.result,
       },
     };
   }
