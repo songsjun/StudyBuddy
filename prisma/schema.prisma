@@ -65,6 +65,7 @@ model Artifact {
   updatedAt       DateTime         @updatedAt
   analysisResults AnalysisResult[]
 
+  @@unique([id, submissionId])
   @@index([submissionId, createdAt])
   @@index([status, createdAt])
   @@map("artifact")
@@ -75,7 +76,7 @@ model AnalysisResult {
   submissionId       String
   submission         Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   artifactId         String
-  artifact           Artifact         @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  artifact           Artifact         @relation(fields: [artifactId, submissionId], references: [id, submissionId], onDelete: Cascade)
   provider           String
   modelName          String?
   status             SubmissionStatus @default(queued)
