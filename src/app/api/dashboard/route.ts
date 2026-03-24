@@ -1,5 +1,5 @@
-import { buildDashboardSummary, type DashboardRecord } from '../../lib/dashboard';
-import { prisma } from '../../lib/prisma';
+import { buildDashboardSummary, type DashboardRecord } from '@/lib/dashboard';
+import { prisma } from '@/lib/prisma';
 
 type AnalysisDelegate = {
   findMany: (args?: Record<string, unknown>) => Promise<DashboardRecord[]>;
