@@ -1,5 +1,5 @@
 import { ANALYSIS_LIFECYCLE_STATUS, DEFAULT_CONFIDENCE_THRESHOLD, getAnalysisStatusForResult, type AnalysisLifecycleStatus } from '../analysis-status';
-import { validateNormalizedAnalysisResult, type NormalizedAnalysisResult } from '../analysis-schema';
+import { validateNormalizedAnalysisResult, type NormalizedAnalysisResult, type NormalizedFeedback } from '../analysis-schema';
 import { buildAnalysisPrompt, type StructuredAnalysisPrompt } from './prompt';
 
 export interface ProviderExecutionResult {
@@ -41,6 +41,7 @@ export interface AnalysisRequest {
 export interface AnalysisResponse {
   status: AnalysisLifecycleStatus;
   result: NormalizedAnalysisResult | null;
+  normalized_feedback: NormalizedFeedback | null;
   providerMetadata: AnalysisProviderMetadata;
   reviewMetadata?: AnalysisReviewMetadata;
   error?: string;
@@ -108,6 +109,16 @@ function hasMaterialDisagreement(
   return false;
 }
 
+function buildNormalizedFeedback(
+  result: NormalizedAnalysisResult,
+  lifecycleStatus: AnalysisLifecycleStatus,
+): NormalizedFeedback | null {
+  if (lifecycleStatus !== 'completed' && lifecycleStatus !== 'low_confidence') {
+    return null;
+  }
+  return { ...result, status: lifecycleStatus as 'completed' | 'low_confidence' };
+}
+
 async function runSingleAnalysis(
   provider: string,
   model: string | undefined,
@@ -123,6 +134,7 @@ async function runSingleAnalysis(
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
+      normalized_feedback: null,
       providerMetadata: buildEmptyMetadata(provider, model),
       error: error instanceof Error ? error.message : 'Provider invocation failed.',
     };
@@ -134,6 +146,7 @@ async function runSingleAnalysis(
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
+      normalized_feedback: null,
       providerMetadata,
       error: execution.stderr || 'Provider exited unsuccessfully.',
     };
@@ -146,6 +159,7 @@ async function runSingleAnalysis(
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
+      normalized_feedback: null,
       providerMetadata,
       error: 'Provider returned invalid JSON.',
     };
@@ -158,14 +172,18 @@ async function runSingleAnalysis(
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
+      normalized_feedback: null,
       providerMetadata,
       error: error instanceof Error ? error.message : 'Provider returned invalid normalized analysis.',
     };
   }
 
+  const lifecycleStatus = getAnalysisStatusForResult(normalized, confidenceThreshold);
+
   return {
-    status: getAnalysisStatusForResult(normalized, confidenceThreshold),
+    status: lifecycleStatus,
     result: normalized,
+    normalized_feedback: buildNormalizedFeedback(normalized, lifecycleStatus),
     providerMetadata,
   };
 }
@@ -179,6 +197,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
+      normalized_feedback: null,
       providerMetadata: buildEmptyMetadata(request.provider, model),
       error: 'No analysis provider runner configured.',
     };
@@ -226,6 +245,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
       result: null,
+      normalized_feedback: null,
       providerMetadata: primary.providerMetadata,
       reviewMetadata: {
         reason: 'secondary_provider_failed',
@@ -238,6 +258,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
       result: null,
+      normalized_feedback: null,
       providerMetadata: primary.providerMetadata,
       reviewMetadata: {
         reason: 'material_disagreement',
