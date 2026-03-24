@@ -226,7 +226,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
   if (!secondary.result) {
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
-      result: primary.result,
+      result: null,
       providerMetadata: primary.providerMetadata,
       reviewMetadata: {
         reason: 'secondary_provider_failed',
@@ -238,7 +238,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
   if (hasMaterialDisagreement(primary.result, secondary.result)) {
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
-      result: primary.result,
+      result: null,
       providerMetadata: primary.providerMetadata,
       reviewMetadata: {
         reason: 'material_disagreement',
