@@ -12,6 +12,15 @@ enum StudyGoalStatus {
   archived
 }
 
+enum SubmissionStatus {
+  queued
+  processing
+  completed
+  low_confidence
+  failed
+  human_review_needed
+}
+
 model StudyGoal {
   id                     String          @id @default(cuid())
   targetName             String
@@ -21,6 +30,56 @@ model StudyGoal {
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
 
-  @@index([status, createdAt])
   @@map("study_goal")
+}
+
+model Submission {
+  id            String           @id @default(cuid())
+  studyGoalId   String
+  sourceType    String
+  sourceLabel   String
+  sourceContent String
+  status        SubmissionStatus @default(queued)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([studyGoalId, createdAt])
+  @@index([status, createdAt])
+  @@map("submission")
+}
+
+model Artifact {
+  id             String           @id @default(cuid())
+  submissionId   String
+  artifactType   String
+  storagePath    String?
+  rawText        String?
+  parsedPayload  String?
+  status         SubmissionStatus @default(queued)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([submissionId, createdAt])
+  @@index([status, createdAt])
+  @@map("artifact")
+}
+
+model AnalysisResult {
+  id                 String           @id @default(cuid())
+  submissionId       String
+  artifactId         String
+  provider           String
+  modelName          String?
+  status             SubmissionStatus @default(queued)
+  normalizedFeedback String?
+  rawResponse        String?
+  scoreEstimate      Float?
+  confidence         Float?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([submissionId, createdAt])
+  @@index([artifactId, createdAt])
+  @@index([status, createdAt])
+  @@map("analysis_result")
 }
