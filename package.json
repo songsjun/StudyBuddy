@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "DATABASE_URL=file:./test.db prisma db push --skip-generate && DATABASE_URL=file:./test.db jest --runInBand",
+    "test": "jest --runInBand",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate --schema prisma/schema.prisma"

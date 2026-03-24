@@ -12,15 +12,70 @@ enum StudyGoalStatus {
   archived
 }
 
+enum SubmissionType {
+  pasted_text
+  source_link
+  file_upload
+}
+
+enum SubmissionStatus {
+  uploaded
+  parsed
+  analyzed
+  completed
+  parse_failed
+  analysis_failed
+  low_confidence
+  human_review_needed
+}
+
 model StudyGoal {
   id                     String          @id @default(cuid())
   targetName             String
   rubricVersion          String
   dimensionSchemaVersion String
   status                 StudyGoalStatus @default(active)
+  submissions            Submission[]
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
+}
 
-  @@index([status, createdAt])
-  @@map("study_goal")
+model Submission {
+  id            String           @id @default(cuid())
+  studyGoalId   String
+  studyGoal     StudyGoal        @relation(fields: [studyGoalId], references: [id], onDelete: Cascade)
+  submissionType SubmissionType
+  notes         String?
+  status        SubmissionStatus @default(uploaded)
+  artifacts     Artifact[]
+  analysisResults AnalysisResult[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+model Artifact {
+  id             String      @id @default(cuid())
+  submissionId   String
+  submission     Submission  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  kind           String
+  filename       String?
+  sourceLink     String?
+  pastedText     String?
+  storagePath    String?
+  parsedArtifact Json?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model AnalysisResult {
+  id                 String           @id @default(cuid())
+  submissionId       String
+  submission         Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  provider           String
+  model              String?
+  status             SubmissionStatus
+  normalizedFeedback Json?
+  providerMetadata   Json
+  reviewMetadata     Json?
+  createdAt          DateTime         @default(now())
 }
