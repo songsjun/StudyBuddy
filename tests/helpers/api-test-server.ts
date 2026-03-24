@@ -1,90 +1,96 @@
-import express, { type Express } from 'express';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import request from 'supertest';
 
-type StudyGoal = {
-  id: string;
-  targetName: string;
-  rubricVersion: string;
-  dimensionSchemaVersion: string;
-  status: 'active';
-};
-
-type Submission = {
-  id: string;
-  studyGoalId: string;
-  submissionType: 'pasted_text';
-  pastedText?: string;
-  sourceLink?: string;
-};
+import { POST as createGoalRoute } from '../../src/app/api/goals/route';
+import { POST as createSubmissionRoute } from '../../src/app/api/submissions/route';
+import { resetStudyGoalsForTests } from '../../src/lib/goals';
+import { resetSubmissionStore } from '../../src/lib/submissions';
 
 export type ApiTestServer = {
-  app: Express;
+  server: Server;
   client: ReturnType<typeof request>;
+  close: () => Promise<void>;
 };
 
-export function createApiTestServer(): ApiTestServer {
-  const app = express();
-  app.use(express.json());
+async function toWebRequest(req: IncomingMessage): Promise<Request> {
+  const chunks: Buffer[] = [];
 
-  let goalCounter = 0;
-  let submissionCounter = 0;
-  const goals: StudyGoal[] = [];
-  const submissions: Submission[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
 
-  app.post('/api/goals', (req, res) => {
-    const { targetName, rubricVersion, dimensionSchemaVersion } = req.body ?? {};
+  const body = Buffer.concat(chunks);
+  const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  const headers = new Headers();
 
-    if (!targetName || !rubricVersion || !dimensionSchemaVersion) {
-      return res.status(400).json({ error: 'Missing required goal fields' });
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        headers.append(key, item);
+      }
+      continue;
     }
 
-    if (goals.some((goal) => goal.status === 'active')) {
-      return res.status(409).json({ error: 'An active study goal already exists' });
+    if (value !== undefined) {
+      headers.set(key, value);
     }
+  }
 
-    goalCounter += 1;
-    const goal: StudyGoal = {
-      id: `goal_${goalCounter}`,
-      targetName,
-      rubricVersion,
-      dimensionSchemaVersion,
-      status: 'active',
-    };
+  return new Request(url, {
+    method: req.method,
+    headers,
+    body: body.length > 0 ? body : undefined,
+    duplex: 'half' as RequestInit['duplex'],
+  });
+}
 
-    goals.push(goal);
-    return res.status(201).json(goal);
+async function writeWebResponse(response: Response, res: ServerResponse): Promise<void> {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
   });
 
-  app.post('/api/submissions', (req, res) => {
-    const { studyGoalId, submissionType, pastedText, sourceLink } = req.body ?? {};
+  res.writeHead(response.status, headers);
+  const payload = Buffer.from(await response.arrayBuffer());
+  res.end(payload);
+}
 
-    if (!studyGoalId || !submissionType) {
-      return res.status(400).json({ error: 'Missing required submission fields' });
+export function createApiTestServer(): ApiTestServer {
+  resetStudyGoalsForTests();
+  resetSubmissionStore();
+
+  const server = createServer(async (req, res) => {
+    const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+
+    if (req.method === 'POST' && pathname === '/api/goals') {
+      const response = await createGoalRoute(await toWebRequest(req));
+      await writeWebResponse(response, res);
+      return;
     }
 
-    if (!goals.some((goal) => goal.id === studyGoalId)) {
-      return res.status(404).json({ error: 'Study goal not found' });
+    if (req.method === 'POST' && pathname === '/api/submissions') {
+      const response = await createSubmissionRoute(await toWebRequest(req));
+      await writeWebResponse(response, res);
+      return;
     }
 
-    if (!pastedText && !sourceLink) {
-      return res.status(400).json({ error: 'Either pastedText or sourceLink is required' });
-    }
-
-    submissionCounter += 1;
-    const submission: Submission = {
-      id: `submission_${submissionCounter}`,
-      studyGoalId,
-      submissionType,
-      ...(pastedText ? { pastedText } : {}),
-      ...(sourceLink ? { sourceLink } : {}),
-    };
-
-    submissions.push(submission);
-    return res.status(201).json(submission);
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
   });
 
   return {
-    app,
-    client: request(app),
+    server,
+    client: request(server),
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      }),
   };
 }
