@@ -60,4 +60,22 @@ describe('buildPrivateArtifactPath', () => {
       'filename must not contain path separators'
     );
   });
+
+  it('rejects dot segments in submissionId or filename', async () => {
+    process.env.PRIVATE_STORAGE_DIR = '/srv/private';
+    const { buildPrivateArtifactPath } = await import('../src/lib/storage');
+
+    expect(() => buildPrivateArtifactPath('.', 'essay.pdf')).toThrow(
+      "submissionId must not be '.' or '..'"
+    );
+    expect(() => buildPrivateArtifactPath('..', 'essay.pdf')).toThrow(
+      "submissionId must not be '.' or '..'"
+    );
+    expect(() => buildPrivateArtifactPath('sub_123', '.')).toThrow(
+      "filename must not be '.' or '..'"
+    );
+    expect(() => buildPrivateArtifactPath('sub_123', '..')).toThrow(
+      "filename must not be '.' or '..'"
+    );
+  });
 });

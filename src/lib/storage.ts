@@ -21,6 +21,10 @@ function ensureSafeSegment(value: string, label: string): string {
     throw new Error(`${label} is required`);
   }
 
+  if (value === '.' || value === '..') {
+    throw new Error(`${label} must not be '.' or '..'`);
+  }
+
   if (path.basename(value) !== value) {
     throw new Error(`${label} must not contain path separators`);
   }
