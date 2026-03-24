@@ -6,3 +6,91 @@ datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
+
+enum StudyGoalStatus {
+  active
+}
+
+enum SubmissionLifecycleStatus {
+  uploaded
+  parsed
+  analyzed
+  completed
+  parse_failed
+  analysis_failed
+  low_confidence
+  human_review_needed
+}
+
+model StudyGoal {
+  id                     String       @id @default(cuid())
+  targetName             String
+  rubricVersion          String
+  dimensionSchemaVersion String
+  status                 StudyGoalStatus @default(active)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  submissions            Submission[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Submission {
+  id              String                    @id @default(cuid())
+  studyGoalId     String
+  status          SubmissionLifecycleStatus @default(uploaded)
+  submissionType  String?
+  sourceType      String?
+  sourceReference String?
+  notes           String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  studyGoal       StudyGoal                 @relation(fields: [studyGoalId], references: [id], onDelete: Cascade)
+  artifacts       Artifact[]
+  analysisResults AnalysisResult[]
+
+  @@index([studyGoalId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Artifact {
+  id              String                    @id @default(cuid())
+  submissionId    String
+  status          SubmissionLifecycleStatus @default(uploaded)
+  kind            String
+  storageKey      String
+  mimeType        String?
+  checksum        String?
+  contentText     String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  submission      Submission                @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  analysisResults AnalysisResult[]
+
+  @@index([submissionId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AnalysisResult {
+  id                 String                    @id @default(cuid())
+  submissionId       String
+  artifactId         String?
+  status             SubmissionLifecycleStatus @default(analyzed)
+  normalizedFeedback String?
+  rawOutput          String?
+  provider           String?
+  model              String?
+  confidence         Float?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  submission         Submission                @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  artifact           Artifact?                 @relation(fields: [artifactId], references: [id], onDelete: SetNull)
+
+  @@index([submissionId])
+  @@index([artifactId])
+  @@index([status])
+  @@index([createdAt])
+}
