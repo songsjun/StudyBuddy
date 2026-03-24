@@ -8,6 +8,14 @@ export interface ProviderExecutionResult {
   exitCode: number;
 }
 
+// Alias exported for test helpers
+export type AnalysisProviderResponse = ProviderExecutionResult;
+
+// Object-style provider interface (for testing / inline use)
+export interface AnalysisProvider {
+  run(prompt?: StructuredAnalysisPrompt): Promise<AnalysisProviderResponse>;
+}
+
 export interface AnalysisProviderMetadata extends ProviderExecutionResult {
   provider: string;
   model?: string;
@@ -24,7 +32,7 @@ export interface AnalysisProviderConfig {
 }
 
 export interface AnalysisRequest {
-  provider: string;
+  provider: string | AnalysisProvider;
   goal: Record<string, unknown>;
   parsedArtifact: Record<string, unknown>;
   rubric?: Record<string, unknown> | string;
@@ -57,6 +65,21 @@ export type AnalysisProviderRunner = (
   invocation: AnalysisProviderInvocation,
 ) => Promise<ProviderExecutionResult>;
 
+function getProviderName(provider: string | AnalysisProvider): string {
+  return typeof provider === 'string' ? provider : 'inline';
+}
+
+function isAnalysisProviderObject(
+  provider: string | AnalysisProvider,
+): provider is AnalysisProvider {
+  return (
+    typeof provider === 'object' &&
+    provider !== null &&
+    'run' in provider &&
+    typeof (provider as AnalysisProvider).run === 'function'
+  );
+}
+
 function buildEmptyMetadata(provider: string, model?: string): AnalysisProviderMetadata {
   return {
     provider,
@@ -84,11 +107,12 @@ function normalizeExecutionMetadata(
 }
 
 function resolveModel(
-  provider: string,
+  provider: string | AnalysisProvider,
   requestModel: string | undefined,
   providerConfigs?: Record<string, AnalysisProviderConfig>,
 ): string | undefined {
-  return requestModel ?? providerConfigs?.[provider]?.model;
+  const name = typeof provider === 'string' ? provider : undefined;
+  return requestModel ?? (name ? providerConfigs?.[name]?.model : undefined);
 }
 
 function hasMaterialDisagreement(
@@ -102,7 +126,11 @@ function hasMaterialDisagreement(
   const primaryWeaknesses = primary.top_weaknesses.map((value) => value.toLowerCase().trim());
   const secondaryWeaknesses = secondary.top_weaknesses.map((value) => value.toLowerCase().trim());
 
-  if (primaryWeaknesses[0] && secondaryWeaknesses[0] && primaryWeaknesses[0] !== secondaryWeaknesses[0]) {
+  if (
+    primaryWeaknesses[0] &&
+    secondaryWeaknesses[0] &&
+    primaryWeaknesses[0] !== secondaryWeaknesses[0]
+  ) {
     return true;
   }
 
@@ -120,7 +148,7 @@ function buildNormalizedFeedback(
 }
 
 async function runSingleAnalysis(
-  provider: string,
+  providerName: string,
   model: string | undefined,
   prompt: StructuredAnalysisPrompt,
   runner: AnalysisProviderRunner,
@@ -129,18 +157,18 @@ async function runSingleAnalysis(
   let execution: ProviderExecutionResult;
 
   try {
-    execution = await runner({ provider, model, prompt });
+    execution = await runner({ provider: providerName, model, prompt });
   } catch (error) {
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
       normalized_feedback: null,
-      providerMetadata: buildEmptyMetadata(provider, model),
+      providerMetadata: buildEmptyMetadata(providerName, model),
       error: error instanceof Error ? error.message : 'Provider invocation failed.',
     };
   }
 
-  const providerMetadata = normalizeExecutionMetadata(provider, model, execution);
+  const providerMetadata = normalizeExecutionMetadata(providerName, model, execution);
 
   if (execution.exitCode !== 0) {
     return {
@@ -174,7 +202,10 @@ async function runSingleAnalysis(
       result: null,
       normalized_feedback: null,
       providerMetadata,
-      error: error instanceof Error ? error.message : 'Provider returned invalid normalized analysis.',
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Provider returned invalid normalized analysis.',
     };
   }
 
@@ -189,16 +220,24 @@ async function runSingleAnalysis(
 }
 
 export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisResponse> {
-  const runner = request.runner;
+  const providerName = getProviderName(request.provider);
   const confidenceThreshold = request.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
   const model = resolveModel(request.provider, request.model, request.providerConfigs);
+
+  // Resolve runner: explicit runner > AnalysisProvider object
+  const runner: AnalysisProviderRunner | undefined =
+    request.runner ??
+    (isAnalysisProviderObject(request.provider)
+      ? (_invocation: AnalysisProviderInvocation) =>
+          (request.provider as AnalysisProvider).run(_invocation.prompt)
+      : undefined);
 
   if (!runner) {
     return {
       status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
       result: null,
       normalized_feedback: null,
-      providerMetadata: buildEmptyMetadata(request.provider, model),
+      providerMetadata: buildEmptyMetadata(providerName, model),
       error: 'No analysis provider runner configured.',
     };
   }
@@ -211,7 +250,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRes
   });
 
   const primary = await runSingleAnalysis(
-    request.provider,
+    providerName,
     model,
     prompt,
     runner,
