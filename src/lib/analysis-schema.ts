@@ -89,7 +89,7 @@ function validateDimensions(value: unknown): NormalizedAnalysisDimension[] {
 
 function assertRequiredKeys(value: PlainObject): void {
   for (const key of NORMALIZED_ANALYSIS_REQUIRED_KEYS) {
-    if (!(key in value)) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
       throw new TypeError(`Missing required key: ${key}.`);
     }
   }
@@ -99,7 +99,7 @@ function validateStatus(value: unknown): NormalizedAnalysisStatus {
   const status = assertString(value, 'status');
 
   if (status !== 'completed') {
-    throw new TypeError('status must be "completed".');
+    throw new TypeError('status must be \"completed\".');
   }
 
   return status;
