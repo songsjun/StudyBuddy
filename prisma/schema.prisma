@@ -12,6 +12,15 @@ enum StudyGoalStatus {
   archived
 }
 
+enum SubmissionStatus {
+  queued
+  processing
+  completed
+  low_confidence
+  failed
+  human_review_needed
+}
+
 model StudyGoal {
   id                     String          @id @default(cuid())
   targetName             String
@@ -20,7 +29,66 @@ model StudyGoal {
   status                 StudyGoalStatus @default(active)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
+  submissions            Submission[]
 
-  @@index([status, createdAt])
   @@map("study_goal")
+}
+
+model Submission {
+  id              String           @id @default(cuid())
+  studyGoalId     String
+  studyGoal       StudyGoal        @relation(fields: [studyGoalId], references: [id], onDelete: Cascade)
+  sourceType      String
+  sourceLabel     String
+  sourceContent   String
+  status          SubmissionStatus @default(queued)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  artifacts       Artifact[]
+  analysisResults AnalysisResult[]
+
+  @@index([studyGoalId, createdAt])
+  @@index([status, createdAt])
+  @@map("submission")
+}
+
+model Artifact {
+  id              String           @id @default(cuid())
+  submissionId    String
+  submission      Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  artifactType    String
+  storagePath     String?
+  rawText         String?
+  parsedPayload   String?
+  status          SubmissionStatus @default(queued)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  analysisResults AnalysisResult[]
+
+  @@unique([id, submissionId])
+  @@index([submissionId, createdAt])
+  @@index([status, createdAt])
+  @@map("artifact")
+}
+
+model AnalysisResult {
+  id                 String           @id @default(cuid())
+  submissionId       String
+  submission         Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  artifactId         String
+  artifact           Artifact         @relation(fields: [artifactId, submissionId], references: [id, submissionId], onDelete: Cascade)
+  provider           String
+  modelName          String?
+  status             SubmissionStatus @default(queued)
+  normalizedFeedback String?
+  rawResponse        String?
+  scoreEstimate      Float?
+  confidence         Float?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([submissionId, createdAt])
+  @@index([artifactId, createdAt])
+  @@index([status, createdAt])
+  @@map("analysis_result")
 }
