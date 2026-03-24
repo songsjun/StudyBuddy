@@ -29,19 +29,23 @@ model StudyGoal {
   status                 StudyGoalStatus @default(active)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
+  submissions            Submission[]
 
   @@map("study_goal")
 }
 
 model Submission {
-  id            String           @id @default(cuid())
-  studyGoalId   String
-  sourceType    String
-  sourceLabel   String
-  sourceContent String
-  status        SubmissionStatus @default(queued)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  studyGoalId     String
+  studyGoal       StudyGoal        @relation(fields: [studyGoalId], references: [id], onDelete: Cascade)
+  sourceType      String
+  sourceLabel     String
+  sourceContent   String
+  status          SubmissionStatus @default(queued)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  artifacts       Artifact[]
+  analysisResults AnalysisResult[]
 
   @@index([studyGoalId, createdAt])
   @@index([status, createdAt])
@@ -49,15 +53,17 @@ model Submission {
 }
 
 model Artifact {
-  id             String           @id @default(cuid())
-  submissionId   String
-  artifactType   String
-  storagePath    String?
-  rawText        String?
-  parsedPayload  String?
-  status         SubmissionStatus @default(queued)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  submissionId    String
+  submission      Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  artifactType    String
+  storagePath     String?
+  rawText         String?
+  parsedPayload   String?
+  status          SubmissionStatus @default(queued)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  analysisResults AnalysisResult[]
 
   @@index([submissionId, createdAt])
   @@index([status, createdAt])
@@ -67,7 +73,9 @@ model Artifact {
 model AnalysisResult {
   id                 String           @id @default(cuid())
   submissionId       String
+  submission         Submission       @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   artifactId         String
+  artifact           Artifact         @relation(fields: [artifactId], references: [id], onDelete: Cascade)
   provider           String
   modelName          String?
   status             SubmissionStatus @default(queued)
