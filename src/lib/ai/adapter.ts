@@ -1,106 +1,250 @@
-import {
-  ANALYSIS_RESULT_STATUS,
-  type AnalysisResultStatus,
-} from '../analysis-status';
-import {
-  type NormalizedAnalysisResult,
-  validateNormalizedAnalysisResult,
-} from '../analysis-schema';
+import { ANALYSIS_LIFECYCLE_STATUS, DEFAULT_CONFIDENCE_THRESHOLD, getAnalysisStatusForResult, type AnalysisLifecycleStatus } from '../analysis-status';
+import { validateNormalizedAnalysisResult, type NormalizedAnalysisResult } from '../analysis-schema';
+import { buildAnalysisPrompt, type StructuredAnalysisPrompt } from './prompt';
+
+export interface ProviderExecutionResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export interface AnalysisProviderMetadata extends ProviderExecutionResult {
+  provider: string;
+  model?: string;
+  rawOutput: string;
+}
+
+export interface AnalysisReviewMetadata {
+  reason: 'secondary_provider_failed' | 'material_disagreement';
+  secondaryProviderMetadata: AnalysisProviderMetadata;
+}
+
+export interface AnalysisProviderConfig {
+  model?: string;
+}
 
 export interface AnalysisRequest {
-  provider: AnalysisProvider;
-  goal: {
-    targetName: string;
-  };
-  parsedArtifact: {
-    markdown: string;
-  };
+  provider: string;
+  goal: Record<string, unknown>;
+  parsedArtifact: Record<string, unknown>;
+  rubric?: Record<string, unknown> | string;
+  dimensions?: Array<Record<string, unknown>>;
   reviewMode: boolean;
+  secondaryProvider?: string;
+  model?: string;
+  secondaryModel?: string;
+  confidenceThreshold?: number;
+  providerConfigs?: Record<string, AnalysisProviderConfig>;
+  runner?: AnalysisProviderRunner;
 }
 
-export interface AnalysisProviderResponse {
-  stdout: string;
-  stderr?: string;
-  exitCode?: number;
+export interface AnalysisResponse {
+  status: AnalysisLifecycleStatus;
+  result: NormalizedAnalysisResult | null;
+  providerMetadata: AnalysisProviderMetadata;
+  reviewMetadata?: AnalysisReviewMetadata;
+  error?: string;
 }
 
-export interface AnalysisProvider {
-  run(request: { prompt: string }): Promise<AnalysisProviderResponse>;
+export interface AnalysisProviderInvocation {
+  provider: string;
+  model?: string;
+  prompt: StructuredAnalysisPrompt;
 }
 
-export interface AnalysisRunResult {
-  status: AnalysisResultStatus;
-  normalized_feedback: NormalizedAnalysisResult | null;
-  providerMetadata: {
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-  };
-}
+export type AnalysisProviderRunner = (
+  invocation: AnalysisProviderInvocation,
+) => Promise<ProviderExecutionResult>;
 
-const LOW_CONFIDENCE_THRESHOLD = 0.5;
-
-function buildPrompt(request: AnalysisRequest): string {
-  return [
-    `Target: ${request.goal.targetName}`,
-    'Return JSON only.',
-    request.parsedArtifact.markdown,
-  ].join('\n\n');
-}
-
-function failedResult(response: AnalysisProviderResponse): AnalysisRunResult {
+function buildEmptyMetadata(provider: string, model?: string): AnalysisProviderMetadata {
   return {
-    status: ANALYSIS_RESULT_STATUS.ANALYSIS_FAILED,
-    normalized_feedback: null,
-    providerMetadata: {
-      stdout: response.stdout,
-      stderr: response.stderr ?? '',
-      exitCode: response.exitCode ?? 0,
-    },
+    provider,
+    model,
+    stdout: '',
+    stderr: '',
+    exitCode: 1,
+    rawOutput: '',
   };
 }
 
-export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRunResult> {
-  const response = await request.provider.run({
-    prompt: buildPrompt(request),
-  });
+function normalizeExecutionMetadata(
+  provider: string,
+  model: string | undefined,
+  execution: ProviderExecutionResult,
+): AnalysisProviderMetadata {
+  return {
+    provider,
+    model,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exitCode,
+    rawOutput: execution.stdout,
+  };
+}
+
+function resolveModel(
+  provider: string,
+  requestModel: string | undefined,
+  providerConfigs?: Record<string, AnalysisProviderConfig>,
+): string | undefined {
+  return requestModel ?? providerConfigs?.[provider]?.model;
+}
+
+function hasMaterialDisagreement(
+  primary: NormalizedAnalysisResult,
+  secondary: NormalizedAnalysisResult,
+): boolean {
+  if (Math.abs(primary.score_estimate - secondary.score_estimate) >= 15) {
+    return true;
+  }
+
+  const primaryWeaknesses = primary.top_weaknesses.map((value) => value.toLowerCase().trim());
+  const secondaryWeaknesses = secondary.top_weaknesses.map((value) => value.toLowerCase().trim());
+
+  if (primaryWeaknesses[0] && secondaryWeaknesses[0] && primaryWeaknesses[0] !== secondaryWeaknesses[0]) {
+    return true;
+  }
+
+  return false;
+}
+
+async function runSingleAnalysis(
+  provider: string,
+  model: string | undefined,
+  prompt: StructuredAnalysisPrompt,
+  runner: AnalysisProviderRunner,
+  confidenceThreshold: number,
+): Promise<AnalysisResponse> {
+  let execution: ProviderExecutionResult;
+
+  try {
+    execution = await runner({ provider, model, prompt });
+  } catch (error) {
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
+      result: null,
+      providerMetadata: buildEmptyMetadata(provider, model),
+      error: error instanceof Error ? error.message : 'Provider invocation failed.',
+    };
+  }
+
+  const providerMetadata = normalizeExecutionMetadata(provider, model, execution);
+
+  if (execution.exitCode !== 0) {
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
+      result: null,
+      providerMetadata,
+      error: execution.stderr || 'Provider exited unsuccessfully.',
+    };
+  }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(response.stdout);
+    parsed = JSON.parse(execution.stdout);
   } catch {
-    return failedResult(response);
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
+      result: null,
+      providerMetadata,
+      error: 'Provider returned invalid JSON.',
+    };
   }
 
   let normalized: NormalizedAnalysisResult;
   try {
     normalized = validateNormalizedAnalysisResult(parsed);
-  } catch {
-    return failedResult(response);
-  }
-
-  if (normalized.confidence < LOW_CONFIDENCE_THRESHOLD) {
+  } catch (error) {
     return {
-      status: ANALYSIS_RESULT_STATUS.LOW_CONFIDENCE,
-      normalized_feedback: {
-        ...normalized,
-        status: ANALYSIS_RESULT_STATUS.LOW_CONFIDENCE,
-      },
-      providerMetadata: {
-        stdout: response.stdout,
-        stderr: response.stderr ?? '',
-        exitCode: response.exitCode ?? 0,
-      },
+      status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
+      result: null,
+      providerMetadata,
+      error: error instanceof Error ? error.message : 'Provider returned invalid normalized analysis.',
     };
   }
 
   return {
-    status: normalized.status,
-    normalized_feedback: normalized,
-    providerMetadata: {
-      stdout: response.stdout,
-      stderr: response.stderr ?? '',
-      exitCode: response.exitCode ?? 0,
-    },
+    status: getAnalysisStatusForResult(normalized, confidenceThreshold),
+    result: normalized,
+    providerMetadata,
   };
+}
+
+export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisResponse> {
+  const runner = request.runner;
+  const confidenceThreshold = request.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
+  const model = resolveModel(request.provider, request.model, request.providerConfigs);
+
+  if (!runner) {
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.ANALYSIS_FAILED,
+      result: null,
+      providerMetadata: buildEmptyMetadata(request.provider, model),
+      error: 'No analysis provider runner configured.',
+    };
+  }
+
+  const prompt = buildAnalysisPrompt({
+    goal: request.goal,
+    parsedArtifact: request.parsedArtifact,
+    rubric: request.rubric,
+    dimensions: request.dimensions,
+  });
+
+  const primary = await runSingleAnalysis(
+    request.provider,
+    model,
+    prompt,
+    runner,
+    confidenceThreshold,
+  );
+
+  if (!request.reviewMode || !primary.result) {
+    return primary;
+  }
+
+  const secondaryProvider = request.secondaryProvider;
+  if (!secondaryProvider) {
+    return primary;
+  }
+
+  const secondaryModel = resolveModel(
+    secondaryProvider,
+    request.secondaryModel,
+    request.providerConfigs,
+  );
+
+  const secondary = await runSingleAnalysis(
+    secondaryProvider,
+    secondaryModel,
+    prompt,
+    runner,
+    confidenceThreshold,
+  );
+
+  if (!secondary.result) {
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
+      result: null,
+      providerMetadata: primary.providerMetadata,
+      reviewMetadata: {
+        reason: 'secondary_provider_failed',
+        secondaryProviderMetadata: secondary.providerMetadata,
+      },
+    };
+  }
+
+  if (hasMaterialDisagreement(primary.result, secondary.result)) {
+    return {
+      status: ANALYSIS_LIFECYCLE_STATUS.HUMAN_REVIEW_NEEDED,
+      result: null,
+      providerMetadata: primary.providerMetadata,
+      reviewMetadata: {
+        reason: 'material_disagreement',
+        secondaryProviderMetadata: secondary.providerMetadata,
+      },
+    };
+  }
+
+  return primary;
 }
