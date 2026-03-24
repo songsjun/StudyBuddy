@@ -11,6 +11,13 @@ type StudyGoalDelegate = {
   deleteMany: (args?: Record<string, unknown>) => Promise<unknown>;
 };
 
+type PrismaClientLike = Record<string, unknown> & {
+  $transaction?: <T>(
+    fn: (tx: Record<string, unknown>) => Promise<T>,
+    options?: Record<string, unknown>,
+  ) => Promise<T>;
+};
+
 export type ActiveStudyGoal = {
   id: string;
   targetName: string;
@@ -49,8 +56,7 @@ export class ActiveStudyGoalConflictError extends Error {
 
 let inMemoryGoals: ActiveStudyGoal[] = [];
 
-function getStudyGoalDelegate(): StudyGoalDelegate | null {
-  const client = prisma as unknown as Record<string, unknown>;
+function getStudyGoalDelegate(client: PrismaClientLike = prisma as unknown as PrismaClientLike): StudyGoalDelegate | null {
   const candidates = ['studyGoal', 'study_goal'];
 
   for (const key of candidates) {
@@ -158,23 +164,7 @@ function createInMemoryGoal(input: CreateStudyGoalInput): ActiveStudyGoal {
   };
 }
 
-export async function getActiveStudyGoal(): Promise<ActiveStudyGoal | null> {
-  const delegate = getStudyGoalDelegate();
-
-  if (!delegate) {
-    const activeGoals = inMemoryGoals.filter((goal) => goal.status === 'active');
-
-    if (activeGoals.length === 0) {
-      return null;
-    }
-
-    if (activeGoals.length > 1) {
-      throw new Error('Multiple active study goals found.');
-    }
-
-    return activeGoals[0];
-  }
-
+async function findActiveStudyGoal(delegate: StudyGoalDelegate): Promise<ActiveStudyGoal | null> {
   if (typeof delegate.findFirst === 'function') {
     const row = await delegate.findFirst({
       where: { status: 'active' },
@@ -202,6 +192,26 @@ export async function getActiveStudyGoal(): Promise<ActiveStudyGoal | null> {
   return normalizeGoal(rows[0]);
 }
 
+export async function getActiveStudyGoal(): Promise<ActiveStudyGoal | null> {
+  const delegate = getStudyGoalDelegate();
+
+  if (!delegate) {
+    const activeGoals = inMemoryGoals.filter((goal) => goal.status === 'active');
+
+    if (activeGoals.length === 0) {
+      return null;
+    }
+
+    if (activeGoals.length > 1) {
+      throw new Error('Multiple active study goals found.');
+    }
+
+    return activeGoals[0];
+  }
+
+  return findActiveStudyGoal(delegate);
+}
+
 export async function createStudyGoal(input: CreateStudyGoalInput): Promise<ActiveStudyGoal> {
   const normalizedInput: CreateStudyGoalInput = {
     targetName: normalizeRequiredString(input.targetName, 'targetName'),
@@ -212,18 +222,60 @@ export async function createStudyGoal(input: CreateStudyGoalInput): Promise<Acti
     ),
   };
 
+  const delegate = getStudyGoalDelegate();
+
+  if (!delegate) {
+    const existingGoal = await getActiveStudyGoal();
+
+    if (existingGoal) {
+      throw new ActiveStudyGoalConflictError(existingGoal);
+    }
+
+    const goal = createInMemoryGoal(normalizedInput);
+    inMemoryGoals = [goal];
+    return goal;
+  }
+
+  const client = prisma as unknown as PrismaClientLike;
+
+  if (typeof client.$transaction === 'function') {
+    return client.$transaction(
+      async (tx) => {
+        const transactionalDelegate = getStudyGoalDelegate(tx as PrismaClientLike);
+
+        if (!transactionalDelegate) {
+          throw new Error('Study goal delegate is unavailable in transaction.');
+        }
+
+        const existingGoal = await findActiveStudyGoal(transactionalDelegate);
+
+        if (existingGoal) {
+          throw new ActiveStudyGoalConflictError(existingGoal);
+        }
+
+        try {
+          const created = await transactionalDelegate.create({
+            data: buildCreatePayload(normalizedInput, 'camel'),
+            select: activeStudyGoalSelect,
+          });
+
+          return normalizeGoal(created);
+        } catch {
+          const created = await transactionalDelegate.create({
+            data: buildCreatePayload(normalizedInput, 'snake'),
+          });
+
+          return normalizeGoal(created);
+        }
+      },
+      { isolationLevel: 'Serializable' },
+    );
+  }
+
   const existingGoal = await getActiveStudyGoal();
 
   if (existingGoal) {
     throw new ActiveStudyGoalConflictError(existingGoal);
-  }
-
-  const delegate = getStudyGoalDelegate();
-
-  if (!delegate) {
-    const goal = createInMemoryGoal(normalizedInput);
-    inMemoryGoals = [goal];
-    return goal;
   }
 
   try {
