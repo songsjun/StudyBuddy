@@ -24,6 +24,17 @@ export type NormalizedAnalysisResult = {
   status: NormalizedAnalysisStatus;
 };
 
+/**
+ * NormalizedFeedback is the analysis result as surfaced to callers.
+ * Unlike NormalizedAnalysisResult whose status is always 'completed',
+ * NormalizedFeedback carries the lifecycle status (completed | low_confidence).
+ */
+export type NormalizedFeedbackStatus = 'completed' | 'low_confidence';
+
+export type NormalizedFeedback = Omit<NormalizedAnalysisResult, 'status'> & {
+  status: NormalizedFeedbackStatus;
+};
+
 type PlainObject = Record<string, unknown>;
 
 function isPlainObject(value: unknown): value is PlainObject {
@@ -59,64 +70,48 @@ function assertString(value: unknown, label: string): string {
 }
 
 function assertStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    throw new TypeError(`${label} must be an array of strings.`);
+  }
+
+  return value;
+}
+
+function assertDimensionArray(value: unknown, label: string): NormalizedAnalysisDimension[] {
   if (!Array.isArray(value)) {
     throw new TypeError(`${label} must be an array.`);
   }
 
-  return value.map((item, index) => assertString(item, `${label}[${index}]`));
+  return value.map((item, index) => {
+    assertPlainObject(item, `${label}[${index}]`);
+
+    return {
+      name: assertString(item.name, `${label}[${index}].name`),
+      score: assertFiniteNumber(item.score, `${label}[${index}].score`),
+      justification: assertString(item.justification, `${label}[${index}].justification`),
+    };
+  });
 }
 
-function validateDimension(value: unknown, index: number): NormalizedAnalysisDimension {
-  assertPlainObject(value, `dimensions[${index}]`);
+export function validateNormalizedAnalysisResult(input: unknown): NormalizedAnalysisResult {
+  assertPlainObject(input, 'input');
+
+  const score_estimate = assertFiniteNumber(input.score_estimate, 'score_estimate');
+  const dimensions = assertDimensionArray(input.dimensions, 'dimensions');
+  const top_weaknesses = assertStringArray(input.top_weaknesses, 'top_weaknesses');
+  const next_actions = assertStringArray(input.next_actions, 'next_actions');
+  const confidence = assertFiniteNumber(input.confidence, 'confidence');
+
+  if (input.status !== 'completed') {
+    throw new TypeError(`status must be "completed", got: ${String(input.status)}`);
+  }
 
   return {
-    name: assertString(value.name, `dimensions[${index}].name`),
-    score: assertFiniteNumber(value.score, `dimensions[${index}].score`),
-    justification: assertString(
-      value.justification,
-      `dimensions[${index}].justification`,
-    ),
-  };
-}
-
-function validateDimensions(value: unknown): NormalizedAnalysisDimension[] {
-  if (!Array.isArray(value)) {
-    throw new TypeError('dimensions must be an array.');
-  }
-
-  return value.map((item, index) => validateDimension(item, index));
-}
-
-function assertRequiredKeys(value: PlainObject): void {
-  for (const key of NORMALIZED_ANALYSIS_REQUIRED_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) {
-      throw new TypeError(`Missing required key: ${key}.`);
-    }
-  }
-}
-
-function validateStatus(value: unknown): NormalizedAnalysisStatus {
-  const status = assertString(value, 'status');
-
-  if (status !== 'completed') {
-    throw new TypeError('status must be \"completed\".');
-  }
-
-  return status;
-}
-
-export function validateNormalizedAnalysisResult(
-  input: unknown,
-): NormalizedAnalysisResult {
-  assertPlainObject(input, 'analysis result');
-  assertRequiredKeys(input);
-
-  return {
-    score_estimate: assertFiniteNumber(input.score_estimate, 'score_estimate'),
-    dimensions: validateDimensions(input.dimensions),
-    top_weaknesses: assertStringArray(input.top_weaknesses, 'top_weaknesses'),
-    next_actions: assertStringArray(input.next_actions, 'next_actions'),
-    confidence: assertFiniteNumber(input.confidence, 'confidence'),
-    status: validateStatus(input.status),
+    score_estimate,
+    dimensions,
+    top_weaknesses,
+    next_actions,
+    confidence,
+    status: 'completed',
   };
 }
