@@ -3,7 +3,7 @@ import {
   StudyGoalNotActiveError,
   createSubmissionWithArtifact,
   type CreateSubmissionInput
-} from '@/lib/submissions';
+} from '../../../lib/submissions';
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -18,7 +18,13 @@ export async function POST(request: Request): Promise<Response> {
   let payload: Partial<CreateSubmissionInput>;
 
   try {
-    payload = (await request.json()) as Partial<CreateSubmissionInput>;
+    const parsed = await request.json();
+
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      return json({ error: 'Request body must be a JSON object.' }, 400);
+    }
+
+    payload = parsed as Partial<CreateSubmissionInput>;
   } catch {
     return json({ error: 'Request body must be valid JSON.' }, 400);
   }
