@@ -1,98 +1,122 @@
-import {
-  ANALYSIS_RESULT_STATUS,
-  type AnalysisResultStatus,
-} from './analysis-status';
+export const NORMALIZED_ANALYSIS_REQUIRED_KEYS = [
+  'score_estimate',
+  'dimensions',
+  'top_weaknesses',
+  'next_actions',
+  'confidence',
+  'status',
+] as const;
 
-export interface NormalizedAnalysisDimension {
+export type NormalizedAnalysisStatus = 'completed';
+
+export type NormalizedAnalysisDimension = {
   name: string;
   score: number;
-}
+  justification: string;
+};
 
-export interface NormalizedAnalysisResult {
+export type NormalizedAnalysisResult = {
   score_estimate: number;
   dimensions: NormalizedAnalysisDimension[];
   top_weaknesses: string[];
   next_actions: string[];
   confidence: number;
-  status: Extract<AnalysisResultStatus, 'completed' | 'low_confidence'>;
-}
+  status: NormalizedAnalysisStatus;
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+type PlainObject = Record<string, unknown>;
+
+function isPlainObject(value: unknown): value is PlainObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
+function assertPlainObject(value: unknown, label: string): asserts value is PlainObject {
+  if (!isPlainObject(value)) {
+    throw new TypeError(`${label} must be a plain object.`);
+  }
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+function assertFiniteNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be a finite number.`);
+  }
+
+  return value;
 }
 
-function isDimension(value: unknown): value is NormalizedAnalysisDimension {
-  return (
-    isRecord(value) &&
-    typeof value.name === 'string' &&
-    isFiniteNumber(value.score)
-  );
+function assertString(value: unknown, label: string): string {
+  if (typeof value !== 'string') {
+    throw new TypeError(`${label} must be a string.`);
+  }
+
+  const normalized = value.trim();
+
+  if (!normalized) {
+    throw new TypeError(`${label} must not be empty.`);
+  }
+
+  return normalized;
 }
 
-function parseCandidate(input: Record<string, unknown>): Record<string, unknown> {
-  if (isRecord(input.normalized_feedback)) {
-    return input.normalized_feedback;
+function assertStringArray(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array.`);
   }
 
-  return input;
+  return value.map((item, index) => assertString(item, `${label}[${index}]`));
 }
 
-export function validateNormalizedAnalysisResult(input: unknown): NormalizedAnalysisResult {
-  if (!isRecord(input)) {
-    throw new Error('Normalized analysis must be an object.');
-  }
-
-  const candidate = parseCandidate(input);
-  const {
-    score_estimate,
-    dimensions,
-    top_weaknesses,
-    next_actions,
-    confidence,
-    status,
-  } = candidate;
-
-  if (!isFiniteNumber(score_estimate)) {
-    throw new Error('score_estimate must be numeric.');
-  }
-
-  if (!Array.isArray(dimensions) || !dimensions.every(isDimension)) {
-    throw new Error('dimensions must be an array of { name, score }.');
-  }
-
-  if (!isStringArray(top_weaknesses)) {
-    throw new Error('top_weaknesses must be a string array.');
-  }
-
-  if (!isStringArray(next_actions)) {
-    throw new Error('next_actions must be a string array.');
-  }
-
-  if (!isFiniteNumber(confidence)) {
-    throw new Error('confidence must be numeric.');
-  }
-
-  if (
-    status !== ANALYSIS_RESULT_STATUS.COMPLETED &&
-    status !== ANALYSIS_RESULT_STATUS.LOW_CONFIDENCE
-  ) {
-    throw new Error('status must be completed or low_confidence.');
-  }
+function validateDimension(value: unknown, index: number): NormalizedAnalysisDimension {
+  assertPlainObject(value, `dimensions[${index}]`);
 
   return {
-    score_estimate,
-    dimensions,
-    top_weaknesses,
-    next_actions,
-    confidence,
-    status,
+    name: assertString(value.name, `dimensions[${index}].name`),
+    score: assertFiniteNumber(value.score, `dimensions[${index}].score`),
+    justification: assertString(
+      value.justification,
+      `dimensions[${index}].justification`,
+    ),
+  };
+}
+
+function validateDimensions(value: unknown): NormalizedAnalysisDimension[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError('dimensions must be an array.');
+  }
+
+  return value.map((item, index) => validateDimension(item, index));
+}
+
+function assertRequiredKeys(value: PlainObject): void {
+  for (const key of NORMALIZED_ANALYSIS_REQUIRED_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new TypeError(`Missing required key: ${key}.`);
+    }
+  }
+}
+
+function validateStatus(value: unknown): NormalizedAnalysisStatus {
+  const status = assertString(value, 'status');
+
+  if (status !== 'completed') {
+    throw new TypeError('status must be \"completed\".');
+  }
+
+  return status;
+}
+
+export function validateNormalizedAnalysisResult(
+  input: unknown,
+): NormalizedAnalysisResult {
+  assertPlainObject(input, 'analysis result');
+  assertRequiredKeys(input);
+
+  return {
+    score_estimate: assertFiniteNumber(input.score_estimate, 'score_estimate'),
+    dimensions: validateDimensions(input.dimensions),
+    top_weaknesses: assertStringArray(input.top_weaknesses, 'top_weaknesses'),
+    next_actions: assertStringArray(input.next_actions, 'next_actions'),
+    confidence: assertFiniteNumber(input.confidence, 'confidence'),
+    status: validateStatus(input.status),
   };
 }

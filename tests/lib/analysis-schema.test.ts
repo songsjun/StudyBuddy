@@ -1,46 +1,96 @@
-import { validateNormalizedAnalysisResult } from '../../src/lib/analysis-schema';
+import {
+  validateNormalizedAnalysisResult,
+  type NormalizedAnalysisResult,
+} from '../../src/lib/analysis-schema';
+
+function buildValidResult(
+  overrides: Partial<NormalizedAnalysisResult> = {},
+): NormalizedAnalysisResult {
+  return {
+    score_estimate: 78,
+    dimensions: [
+      {
+        name: 'Evidence',
+        score: 3,
+        justification: 'Evidence is relevant but underexplained.',
+      },
+    ],
+    top_weaknesses: ['Thin explanation of quoted evidence'],
+    next_actions: ['Add one sentence explaining why each quote matters'],
+    confidence: 0.82,
+    status: 'completed',
+    ...overrides,
+  };
+}
 
 describe('validateNormalizedAnalysisResult', () => {
-  it('accepts a valid top-level normalized result', () => {
-    const result = validateNormalizedAnalysisResult({
-      score_estimate: 78,
-      dimensions: [{ name: 'evidence', score: 2 }],
-      top_weaknesses: ['evidence_selection'],
-      next_actions: ['Quote the strongest line before choosing an answer'],
-      confidence: 0.82,
+  it('returns the parsed normalized result for a valid payload', () => {
+    const input = buildValidResult();
+
+    expect(validateNormalizedAnalysisResult(input)).toEqual(input);
+  });
+
+  it('throws when a required key is missing', () => {
+    const input = {
+      dimensions: [],
+      top_weaknesses: [],
+      next_actions: [],
+      confidence: 0.7,
       status: 'completed',
-    });
+    };
 
-    expect(result.status).toBe('completed');
-    expect(result.dimensions[0]).toEqual({ name: 'evidence', score: 2 });
+    expect(() => validateNormalizedAnalysisResult(input)).toThrow(
+      'Missing required key: score_estimate.',
+    );
   });
 
-  it('accepts a nested normalized_feedback block', () => {
-    const result = validateNormalizedAnalysisResult({
-      normalized_feedback: {
-        score_estimate: 78,
-        dimensions: [{ label: 'evidence', score: 2 }],
-        top_weaknesses: ['evidence_selection'],
-        next_actions: ['Quote the strongest line before choosing an answer'],
-        confidence: 0.82,
-        status: 'complete',
-      },
-    });
+  it('throws when confidence is not numeric', () => {
+    const input = {
+      ...buildValidResult(),
+      confidence: '0.82',
+    };
 
-    expect(result.status).toBe('completed');
-    expect(result.dimensions[0]).toEqual({ name: 'evidence', score: 2 });
+    expect(() => validateNormalizedAnalysisResult(input)).toThrow(
+      'confidence must be a finite number.',
+    );
   });
 
-  it('throws for malformed payloads', () => {
-    expect(() =>
-      validateNormalizedAnalysisResult({
-        score_estimate: 78,
-        dimensions: [{ name: 'evidence', score: '2' }],
-        top_weaknesses: ['evidence_selection'],
-        next_actions: ['Quote the strongest line before choosing an answer'],
-        confidence: 0.82,
-        status: 'completed',
-      }),
-    ).toThrow('dimensions must contain objects with name and score.');
+  it('throws when a dimension entry is malformed', () => {
+    const input = {
+      ...buildValidResult(),
+      dimensions: [
+        {
+          name: 'Evidence',
+          score: '3',
+          justification: 'Needs clearer reasoning.',
+        },
+      ],
+    };
+
+    expect(() => validateNormalizedAnalysisResult(input)).toThrow(
+      'dimensions[0].score must be a finite number.',
+    );
+  });
+
+  it('throws when top weaknesses contain non-strings', () => {
+    const input = {
+      ...buildValidResult(),
+      top_weaknesses: ['Missing inference', 42],
+    };
+
+    expect(() => validateNormalizedAnalysisResult(input)).toThrow(
+      'top_weaknesses[1] must be a string.',
+    );
+  });
+
+  it('throws when status is not completed', () => {
+    const input = {
+      ...buildValidResult(),
+      status: 'analysis_failed',
+    };
+
+    expect(() => validateNormalizedAnalysisResult(input)).toThrow(
+      'status must be "completed".',
+    );
   });
 });
